@@ -49,8 +49,9 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
         )
         return
 
-    # Cultural advice
-    cultural = get_cultural_advice(mother.region or 'general')
+    # Region is not stored on the current Mother model, so use the general
+    # cultural guidance until a region field is added to the data model.
+    cultural = get_cultural_advice('general')
 
     # Onboarding or default
     if not mother.delivery_type or mother.delivery_type == DeliveryType.unknown:
