@@ -15,11 +15,30 @@ app = FastAPI(title="Care Sister Postpartum Bot")
 async def startup():
     init_db()
     logger.info("Care Sister database initialized")
+    logger.info(
+        "Evolution configuration at startup: url=%s api_key=%s instance=%s",
+        bool(settings.EVOLUTION_API_URL),
+        bool(settings.EVOLUTION_API_KEY),
+        bool(settings.EVOLUTION_INSTANCE),
+    )
 
 
 @app.get("/")
 async def root():
     return {"status": "Care Sister Bot is running", "whatsapp_provider": "evolution-test"}
+
+
+@app.get("/diagnostics")
+async def diagnostics():
+    """Safe configuration diagnostic; never returns secret values."""
+    return {
+        "status": "ok",
+        "evolution_configured": {
+            "url_present": bool(settings.EVOLUTION_API_URL),
+            "api_key_present": bool(settings.EVOLUTION_API_KEY),
+            "instance_present": bool(settings.EVOLUTION_INSTANCE),
+        },
+    }
 
 
 @app.get("/webhook")
