@@ -57,7 +57,6 @@ def extract_evolution_message(payload: dict):
     if not remote_jid or remote_jid.endswith("@g.us"):
         return None
 
-    # Ignore messages sent by the connected WhatsApp account itself.
     if key.get("fromMe"):
         return None
 
@@ -82,27 +81,36 @@ async def evolution_webhook(request: Request):
     """Receive Evolution API MESSAGES_UPSERT events and run Care Sister."""
     try:
         payload = await request.json()
+        logger.info("Evolution webhook received: event=%s keys=%s", payload.get("event"), list(payload.keys()))
+        data = payload.get("data") or {}
+        key = data.get("key") or {}
+        message = data.get("message") or {}
+        logger.info(
+            "Evolution payload details: remoteJid=%s fromMe=%s messageKeys=%s",
+            key.get("remoteJid"), key.get("fromMe"), list(message.keys())
+        )
 
         event = str(payload.get("event") or "").upper()
         if event and event not in {"MESSAGES_UPSERT", "MESSAGES_UPSERTED"}:
+            logger.info("Ignoring Evolution event: %s", event)
             return {"status": "ignored", "event": event}
 
         extracted = extract_evolution_message(payload)
         if not extracted:
+            logger.info("Evolution webhook ignored: no inbound text message extracted")
             return {"status": "ignored"}
 
         wa_id, text, first_name = extracted
-        logger.info("Evolution message received from %s", wa_id)
+        logger.info("Evolution message extracted: sender=%s first_name=%s text=%r", wa_id, first_name, text)
 
         db = SessionLocal()
         try:
             await handle_message(db, wa_id, text, first_name)
+            logger.info("Care Sister handled message successfully for %s", wa_id)
         finally:
             db.close()
 
         return {"status": "ok"}
     except Exception as e:
         logger.exception("Error processing Evolution webhook: %s", e)
-        # Return 200 so a transient bot-side error does not cause an uncontrolled
-        # webhook retry storm while we are testing.
         return {"status": "error"}
