@@ -90,7 +90,9 @@ async def evolution_webhook(request: Request):
             key.get("remoteJid"), key.get("fromMe"), list(message.keys())
         )
 
-        event = str(payload.get("event") or "").upper()
+        # Evolution v2 uses a dotted event name such as "messages.upsert".
+        # Normalize punctuation/case so both dotted and underscored variants work.
+        event = str(payload.get("event") or "").strip().upper().replace(".", "_")
         if event and event not in {"MESSAGES_UPSERT", "MESSAGES_UPSERTED"}:
             logger.info("Ignoring Evolution event: %s", event)
             return {"status": "ignored", "event": event}
