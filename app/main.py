@@ -14,23 +14,31 @@ app = FastAPI(title="Care Sister Postpartum Bot")
 @app.on_event("startup")
 async def startup():
     init_db()
-    logger.info("Care Sister database initialized")
     logger.info(
         "Evolution configuration at startup: url=%s api_key=%s instance=%s",
         bool(settings.EVOLUTION_API_URL),
         bool(settings.EVOLUTION_API_KEY),
         bool(settings.EVOLUTION_INSTANCE),
     )
+    logger.info("Care Sister database initialized")
 
 
 @app.get("/")
 async def root():
-    return {"status": "Care Sister Bot is running", "whatsapp_provider": "evolution-test"}
+    return {
+        "status": "Care Sister Bot is running",
+        "whatsapp_provider": "evolution-test",
+        "evolution_configured": bool(
+            settings.EVOLUTION_API_URL
+            and settings.EVOLUTION_API_KEY
+            and settings.EVOLUTION_INSTANCE
+        ),
+    }
 
 
 @app.get("/diagnostics")
 async def diagnostics():
-    """Safe configuration diagnostic; never returns secret values."""
+    """Safe configuration check; never returns secret values."""
     return {
         "status": "ok",
         "evolution_configured": {
@@ -58,7 +66,7 @@ async def verify_webhook(request: Request):
 async def receive_webhook(request: Request):
     """Legacy Meta webhook endpoint; retained while Evolution is used for testing."""
     try:
-        payload = await request.json()
+        await request.json()
         logger.info("Received legacy webhook payload")
         return {"status": "ok"}
     except Exception as e:
@@ -109,8 +117,6 @@ async def evolution_webhook(request: Request):
             key.get("remoteJid"), key.get("fromMe"), list(message.keys())
         )
 
-        # Evolution v2 uses a dotted event name such as "messages.upsert".
-        # Normalize punctuation/case so both dotted and underscored variants work.
         event = str(payload.get("event") or "").strip().upper().replace(".", "_")
         if event and event not in {"MESSAGES_UPSERT", "MESSAGES_UPSERTED"}:
             logger.info("Ignoring Evolution event: %s", event)
