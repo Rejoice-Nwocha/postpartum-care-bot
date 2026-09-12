@@ -1,7 +1,10 @@
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -21,3 +24,11 @@ class Settings:
 
 
 settings = Settings()
+
+# Safe diagnostic: report presence only, never log the actual secret/key.
+logger.info(
+    "Evolution configuration loaded: url=%s api_key=%s instance=%s",
+    bool(settings.EVOLUTION_API_URL),
+    bool(settings.EVOLUTION_API_KEY),
+    bool(settings.EVOLUTION_INSTANCE),
+)
