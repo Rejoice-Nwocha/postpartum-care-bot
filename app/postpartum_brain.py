@@ -1,12 +1,12 @@
 """ACHOT Care Sister knowledge and conversation layer.
 
-This module is intentionally conservative: it provides education and supportive
-self-care guidance, while routing possible danger signs to the existing triage
-layer instead of attempting diagnosis or treatment.
+This module provides supportive postpartum education and a cultural-awareness
+layer. It does not diagnose or replace professional healthcare.
 """
 
 import re
 from dataclasses import dataclass
+from app.cultural_knowledge import cultural_response
 
 
 @dataclass(frozen=True)
@@ -138,7 +138,6 @@ def detect_intent(text: str) -> str | None:
     if not value:
         return None
 
-    # More specific topics should win over generic terms such as "pain" or "blood".
     ordered = [
         "lochia", "baby_jaundice", "hope", "trauma", "csection", "perineum",
         "breastfeeding", "breast", "contraception", "baby_feeding", "baby_sleep",
@@ -153,9 +152,13 @@ def detect_intent(text: str) -> str | None:
 
 
 def answer_postpartum_question(text: str) -> BrainResponse | None:
+    cultural = cultural_response(text)
+    if cultural:
+        return BrainResponse(cultural)
+
     intent = detect_intent(text)
     if intent == "greeting":
         return BrainResponse(
-            "Hello Mama. I'm here with you. You can ask me anything about your recovery, your emotions, breastfeeding, your baby, sleep, nutrition, or changes in your body. There is no silly question here."
+            "Hello Mama. I'm here with you. You can ask me about your recovery, emotions, breastfeeding, your baby, sleep, nutrition, cultural practices or changes in your body. There is no silly question here."
         )
     return RESPONSES.get(intent) if intent else None
