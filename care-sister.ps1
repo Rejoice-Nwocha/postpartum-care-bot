@@ -24,7 +24,7 @@ Usage:
 Commands:
   help                Show this help
   status              Show Git branch/status and project files
-  test                Run the Python test suite
+  test                Run the Python test suite using the project environment
   diagnostics        Check the local Care Sister FastAPI diagnostics endpoint
   logs                Show recent Docker/Evolution logs
   evolution-status    Show local Evolution API container status
@@ -50,21 +50,27 @@ function Invoke-Git([string[]]$GitArgs) {
     }
 }
 
+function Get-Python {
+    $venvPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        return $venvPython
+    }
+
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -ne $python) {
+        return $python.Source
+    }
+
+    throw "Python was not found. Create or activate the project virtual environment first."
+}
+
 function Test-PythonSuite {
     Write-Section "Python tests"
 
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        throw "Python was not found on PATH. Activate your project environment first."
-    }
+    $python = Get-Python
+    Write-Host "Using Python: $python" -ForegroundColor DarkGray
 
-    $pytest = Get-Command pytest -ErrorAction SilentlyContinue
-    if ($null -eq $pytest) {
-        Write-Host "pytest is not installed in the current environment." -ForegroundColor Yellow
-        Write-Host "Install the development test dependency with: python -m pip install pytest" -ForegroundColor Yellow
-        exit 2
-    }
-
-    & pytest -q
+    & $python -m pytest -q
     if ($LASTEXITCODE -ne 0) {
         throw "Test suite failed with exit code $LASTEXITCODE"
     }
