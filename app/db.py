@@ -43,6 +43,8 @@ class Mother(Base):
     checkins_sent = Column(String, default="")
     pending_prompt = Column(String, nullable=True)
     current_topic = Column(String, nullable=True)
+    pending_question = Column(Text, nullable=True)
+    expected_answer_type = Column(String, nullable=True)
     human_review_since = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -74,9 +76,15 @@ def init_db():
 
     inspector = inspect(engine)
     columns = {column["name"] for column in inspector.get_columns("mothers")}
-    if "current_topic" not in columns:
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE mothers ADD COLUMN current_topic VARCHAR"))
+    migrations = {
+        "current_topic": "ALTER TABLE mothers ADD COLUMN current_topic VARCHAR",
+        "pending_question": "ALTER TABLE mothers ADD COLUMN pending_question TEXT",
+        "expected_answer_type": "ALTER TABLE mothers ADD COLUMN expected_answer_type VARCHAR",
+    }
+    for column_name, statement in migrations.items():
+        if column_name not in columns:
+            with engine.begin() as connection:
+                connection.execute(text(statement))
 
 
 def get_db():
