@@ -8,6 +8,8 @@ from app.postpartum_brain import BrainResponse, RESPONSES, detect_intent
 class Context:
     current_topic: str | None = None
     postpartum_days: int | None = None
+    pending_question: str | None = None
+    expected_answer_type: str | None = None
 
 
 def normalise(text: str) -> str:
@@ -30,10 +32,31 @@ def extract_days(text: str) -> int | None:
     return None
 
 
-def contextual_response(text: str, current_topic: str | None = None, postpartum_days: int | None = None) -> BrainResponse | None:
+def explicit_intent(text: str) -> str | None:
+    """Return an intent explicitly mentioned in the latest message."""
+    return detect_intent(text)
+
+
+def _topic_for_context(text: str, current_topic: str | None) -> str | None:
+    # A clear topic in the latest message must override stale conversation
+    # state. Only short/ambiguous follow-ups should inherit current_topic.
+    detected = explicit_intent(text)
+    topic = detected or current_topic
+    # Bleeding and lochia are treated as the same clinical conversation thread
+    # for follow-up purposes, while preserving the stored topic name.
+    return "lochia" if topic == "bleeding" else topic
+
+
+def contextual_response(
+    text: str,
+    current_topic: str | None = None,
+    postpartum_days: int | None = None,
+    pending_question: str | None = None,
+    expected_answer_type: str | None = None,
+) -> BrainResponse | None:
     """Interpret short follow-ups using the mother's existing conversation context."""
     value = normalise(text)
-    topic = current_topic or detect_intent(value)
+    topic = _topic_for_context(value, current_topic)
     mentioned_days = extract_days(value)
     days = mentioned_days if mentioned_days is not None else postpartum_days
 
@@ -46,6 +69,9 @@ def contextual_response(text: str, current_topic: str | None = None, postpartum_
         ))
         heavier = any(term in value for term in (
             "heavier", "getting heavier", "more blood", "more bleeding", "soaking", "soaked"
+        ))
+        lighter = any(term in value for term in (
+            "lighter", "less blood", "less bleeding", "not as heavy", "decreased"
         ))
         fever = any(term in value for term in ("fever", "temperature", "chills", "shivering"))
         worsening_pain = any(term in value for term in (
@@ -80,6 +106,17 @@ def contextual_response(text: str, current_topic: str | None = None, postpartum_
             return BrainResponse(
                 "Thank you for telling me, Mama. A change toward heavier postpartum bleeding deserves attention. Please contact your maternity team or a qualified healthcare professional for advice, and seek urgent care if the bleeding becomes suddenly very heavy or you feel faint or very unwell.",
                 "Has the amount increased suddenly, or has it been gradually getting heavier?",
+            )
+
+        if lighter:
+            if "yesterday" in value or "today" in value or pending_question:
+                return BrainResponse(
+                    "That helps me understand the change, Mama. If it was lighter yesterday and is heavier today, the important thing is that the bleeding has increased compared with yesterday. Please keep an eye on the amount and how you feel, and contact your maternity team or a qualified healthcare professional if the increase continues or you feel unwell.",
+                    "Right now, is it just a little heavier than yesterday, or are you soaking pads much faster than before?",
+                )
+            return BrainResponse(
+                "That sounds like the bleeding is becoming lighter, which can be part of normal postpartum recovery. Keep noticing the overall trend and how you feel.",
+                "Has it been steadily getting lighter, and do you have any pain, fever, dizziness or unusual smell?",
             )
 
     if topic in {"mood", "hope", "anxiety"}:
