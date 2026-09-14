@@ -69,8 +69,6 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def receive_webhook(request: Request):
-    # Keep the legacy path compatible with Evolution configurations that point
-    # at /webhook instead of /webhook/evolution.
     logger.info("POST /webhook received; forwarding to Evolution handler")
     return await evolution_webhook(request)
 
@@ -134,10 +132,14 @@ async def evolution_webhook(request: Request):
                     logger.info("Duplicate Evolution message ignored: %s", message_id)
                     return {"status": "duplicate"}
 
+            # Process first. The inbound event is marked consumed only after
+            # handle_message completes successfully, so a failed outbound send
+            # can be retried by Evolution without being swallowed by deduplication.
+            await handle_message(db, wa_id, text, first_name)
+
             logged_body = f"[evolution:{message_id}] {text}" if message_id else text
             db.add(MessageLog(wa_id=wa_id, direction="in", body=logged_body))
             db.commit()
-            await handle_message(db, wa_id, text, first_name)
         finally:
             db.close()
 
