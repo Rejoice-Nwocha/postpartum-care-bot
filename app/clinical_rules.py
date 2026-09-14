@@ -48,10 +48,31 @@ def clinical_response(text: str, postpartum_days: int | None = None) -> Clinical
             "Mama, a severe headache together with vision changes after birth needs urgent medical assessment. Please seek emergency medical care now.",
         )
 
-    if _has(value, "calf pain", "calf hurts", "one leg swollen", "one leg is swollen", "leg swelling") and _has(value, "red", "warm", "swollen", "pain"):
+    # A broad "my leg is swollen" message is not enough by itself for the
+    # emergency rule. Escalate when the wording points to one-sided/new calf or
+    # leg symptoms, especially with pain, warmth or redness.
+    one_sided_leg = _has(
+        value,
+        "one leg",
+        "one calf",
+        "only one leg",
+        "only one calf",
+        "left leg",
+        "right leg",
+        "left calf",
+        "right calf",
+    )
+    leg_symptom = _has(value, "swollen", "swelling", "pain", "hurts", "red", "warm", "hot", "tender")
+    if one_sided_leg and leg_symptom:
         return ClinicalResult(
             "CRITICAL",
-            "Mama, new pain, warmth, redness or swelling in one leg after birth needs urgent medical assessment. Please seek medical care promptly and do not massage the painful area.",
+            "Mama, new pain, warmth, redness or swelling affecting one leg after birth needs urgent medical assessment. Please seek medical care promptly and do not massage the painful area.",
+        )
+
+    if _has(value, "calf pain", "calf hurts") and leg_symptom:
+        return ClinicalResult(
+            "CRITICAL",
+            "Mama, new calf pain or swelling after birth needs urgent medical assessment. Please seek medical care promptly and do not massage the painful area.",
         )
 
     # Postpartum bleeding/infection combinations.
