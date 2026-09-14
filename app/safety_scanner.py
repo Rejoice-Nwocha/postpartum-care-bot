@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from app.clinical_rules import clinical_response
+
 
 class TriageLevel(str, Enum):
     GREEN = "GREEN"
@@ -55,17 +57,32 @@ def get_empathetic_response(result: ScanResult):
     return "Thank you for sharing, Mama. I'm here with you."
 
 
-def scan_message(text: str) -> ScanResult:
+def scan_message(text: str, postpartum_days: int | None = None) -> ScanResult:
     value = re.sub(r"\s+", " ", (text or "").lower().strip())
     if not value:
         return ScanResult(TriageLevel.GREEN, [], "none", get_empathetic_response(ScanResult(TriageLevel.GREEN, [], "none")))
 
+    # Keep the fast emergency regex layer first. This is a conservative safety net
+    # for obvious danger phrases. Then apply the combination-aware clinical rules
+    # before generic MEDIUM matching so symptom clusters get a useful response.
     for category, pattern in CRITICAL_PATTERNS:
         if re.search(pattern, value):
-            return ScanResult(TriageLevel.CRITICAL, [category], category, get_empathetic_response(ScanResult(TriageLevel.CRITICAL, [category], category)))
+            result = ScanResult(TriageLevel.CRITICAL, [category], category)
+            result.response_template = get_empathetic_response(result)
+            return result
+
+    clinical = clinical_response(value, postpartum_days=postpartum_days)
+    if clinical:
+        try:
+            level = TriageLevel(clinical.level)
+        except ValueError:
+            level = TriageLevel.MEDIUM
+        return ScanResult(level, ["clinical_rule"], "clinical_rule", clinical.response + ("\n\n" + clinical.follow_up if clinical.follow_up else ""))
 
     for category, pattern in MEDIUM_PATTERNS:
         if re.search(pattern, value):
-            return ScanResult(TriageLevel.MEDIUM, [category], category, get_empathetic_response(ScanResult(TriageLevel.MEDIUM, [category], category)))
+            result = ScanResult(TriageLevel.MEDIUM, [category], category)
+            result.response_template = get_empathetic_response(result)
+            return result
 
     return ScanResult(TriageLevel.GREEN, [], "none", get_empathetic_response(ScanResult(TriageLevel.GREEN, [], "none")))
