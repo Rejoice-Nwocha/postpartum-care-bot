@@ -168,7 +168,11 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
     if not clean_text:
         return
 
-    scan_result = scan_message(clean_text)
+    # Pass postpartum timing into the clinical layer so rules that depend on
+    # recovery stage can distinguish, for example, early bleeding from bleeding
+    # that becomes heavier again after the first week.
+    current_day = postpartum_day(mother)
+    scan_result = scan_message(clean_text, postpartum_days=current_day)
     if scan_result.triage_level != TriageLevel.GREEN:
         mother.triage_level = scan_result.triage_level
         db.commit()
@@ -226,7 +230,7 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             return
 
     if mother.current_topic:
-        contextual = contextual_response(clean_text, current_topic=mother.current_topic, postpartum_days=postpartum_day(mother))
+        contextual = contextual_response(clean_text, current_topic=mother.current_topic, postpartum_days=current_day)
         if contextual:
             remember_topic(mother, clean_text)
             if mother.current_topic == "mood" and "safe right now" in contextual.text.lower():
