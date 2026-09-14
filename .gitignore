@@ -1,6 +1,9 @@
-﻿__pycache__/
+__pycache__/
 venv/
 *.pyc
+*.db
 .env
 __MACOSX/
 .DS_Store
+.pytest_cache/
+.coverage
