@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum, inspect, text
+from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum, inspect, text, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
 
@@ -54,6 +54,15 @@ class MessageLog(Base):
     direction = Column(String)
     body = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CheckinDelivery(Base):
+    __tablename__ = "checkin_delivery"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    wa_id = Column(String, index=True, nullable=False)
+    day = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("wa_id", "day", name="uq_checkin_delivery_wa_day"),)
 
 
 def init_db():
