@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 import logging
 from app.config import settings
-from app.db import init_db, SessionLocal
+from app.db import init_db, SessionLocal, MessageLog
 from app.state_machine import handle_message
 
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +27,7 @@ async def startup():
 async def root():
     return {
         "status": "Care Sister Bot is running",
-        "whatsapp_provider": "evolution-test",
+        "whatsapp_provider": "Evolution API / Baileys",
         "evolution_configured": bool(
             settings.EVOLUTION_API_URL
             and settings.EVOLUTION_API_KEY
@@ -51,7 +51,7 @@ async def diagnostics():
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    """Legacy Meta webhook verification; kept for later production integration."""
+    """Legacy Meta webhook verification; retained for later integration."""
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
@@ -64,27 +64,25 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def receive_webhook(request: Request):
-    """Legacy Meta webhook endpoint; retained while Evolution is used for testing."""
+    """Legacy Meta endpoint; retained for later integration."""
     try:
         await request.json()
         logger.info("Received legacy webhook payload")
         return {"status": "ok"}
-    except Exception as e:
-        logger.error("Error processing legacy webhook: %s", e)
+    except Exception:
+        logger.exception("Error processing legacy webhook")
         return {"status": "error"}
 
 
 def extract_evolution_message(payload: dict):
-    """Extract the basic sender/message fields from an Evolution MESSAGES_UPSERT payload."""
+    """Extract inbound one-to-one text from an Evolution MESSAGES_UPSERT payload."""
     data = payload.get("data") or {}
     key = data.get("key") or {}
     message = data.get("message") or {}
-
     remote_jid = key.get("remoteJid") or ""
-    if not remote_jid or remote_jid.endswith("@g.us"):
-        return None
 
-    if key.get("fromMe"):
+    # Ignore groups and messages sent by the bot itself.
+    if not remote_jid or remote_jid.endswith("@g.us") or key.get("fromMe"):
         return None
 
     text = (
@@ -94,13 +92,13 @@ def extract_evolution_message(payload: dict):
         or (message.get("videoMessage") or {}).get("caption")
         or ""
     ).strip()
-
     if not text:
         return None
 
     wa_id = remote_jid.split("@", 1)[0]
-    first_name = data.get("pushName") or "Mama"
-    return wa_id, text, first_name
+    first_name = (data.get("pushName") or "Mama").strip() or "Mama"
+    message_id = key.get("id") or ""
+    return wa_id, text, first_name, message_id
 
 
 @app.post("/webhook/evolution")
@@ -108,36 +106,37 @@ async def evolution_webhook(request: Request):
     """Receive Evolution API MESSAGES_UPSERT events and run Care Sister."""
     try:
         payload = await request.json()
-        logger.info("Evolution webhook received: event=%s keys=%s", payload.get("event"), list(payload.keys()))
-        data = payload.get("data") or {}
-        key = data.get("key") or {}
-        message = data.get("message") or {}
-        logger.info(
-            "Evolution payload details: remoteJid=%s fromMe=%s messageKeys=%s",
-            key.get("remoteJid"), key.get("fromMe"), list(message.keys())
-        )
-
         event = str(payload.get("event") or "").strip().upper().replace(".", "_")
         if event and event not in {"MESSAGES_UPSERT", "MESSAGES_UPSERTED"}:
-            logger.info("Ignoring Evolution event: %s", event)
             return {"status": "ignored", "event": event}
 
         extracted = extract_evolution_message(payload)
         if not extracted:
-            logger.info("Evolution webhook ignored: no inbound text message extracted")
             return {"status": "ignored"}
 
-        wa_id, text, first_name = extracted
-        logger.info("Evolution message extracted: sender=%s first_name=%s text=%r", wa_id, first_name, text)
-
+        wa_id, text, first_name, message_id = extracted
         db = SessionLocal()
         try:
+            # Evolution can retry webhook delivery. A WhatsApp message id is
+            # the stable dedupe key when it is supplied.
+            if message_id:
+                duplicate = db.query(MessageLog).filter(
+                    MessageLog.wa_id == wa_id,
+                    MessageLog.direction == "in",
+                    MessageLog.body.startswith(f"[evolution:{message_id}]")
+                ).first()
+                if duplicate:
+                    logger.info("Duplicate Evolution message ignored: %s", message_id)
+                    return {"status": "duplicate"}
+
+            logged_body = f"[evolution:{message_id}] {text}" if message_id else text
+            db.add(MessageLog(wa_id=wa_id, direction="in", body=logged_body))
+            db.commit()
             await handle_message(db, wa_id, text, first_name)
-            logger.info("Care Sister handled message successfully for %s", wa_id)
         finally:
             db.close()
 
         return {"status": "ok"}
-    except Exception as e:
-        logger.exception("Error processing Evolution webhook: %s", e)
+    except Exception:
+        logger.exception("Error processing Evolution webhook")
         return {"status": "error"}
