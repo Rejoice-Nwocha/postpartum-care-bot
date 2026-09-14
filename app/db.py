@@ -1,5 +1,5 @@
-﻿from datetime import datetime, date
-from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum
+from datetime import datetime, date
+from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
 
@@ -33,15 +33,16 @@ class TriageLevel(str, enum.Enum):
 
 class Mother(Base):
     __tablename__ = "mothers"
-    
+
     wa_id = Column(String, primary_key=True, index=True)
     first_name = Column(String, default="Mama")
     delivery_date = Column(Date, nullable=True)
     delivery_type = Column(SQLEnum(DeliveryType), default=DeliveryType.unknown)
     bot_status = Column(SQLEnum(BotStatus), default=BotStatus.automated)
     triage_level = Column(SQLEnum(TriageLevel), default=TriageLevel.GREEN)
-    checkins_sent = Column(String, default="")   # e.g. "3,7"
+    checkins_sent = Column(String, default="")
     pending_prompt = Column(String, nullable=True)
+    current_topic = Column(String, nullable=True)
     human_review_since = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -50,13 +51,23 @@ class MessageLog(Base):
     __tablename__ = "message_log"
     id = Column(Integer, primary_key=True, autoincrement=True)
     wa_id = Column(String, index=True)
-    direction = Column(String)  # in | out
+    direction = Column(String)
     body = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def init_db():
+    """Create tables and apply lightweight migrations for existing SQLite DBs."""
     Base.metadata.create_all(bind=engine)
+
+    if "sqlite" not in settings.DATABASE_URL:
+        return
+
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("mothers")}
+    if "current_topic" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE mothers ADD COLUMN current_topic VARCHAR"))
 
 
 def get_db():

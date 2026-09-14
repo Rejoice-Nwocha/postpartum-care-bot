@@ -1,25 +1,62 @@
-## Postpartum Care Sister Bot
+# Care Sister — ACHOT Postpartum Companion
 
-A culturally sensitive WhatsApp bot supporting new mothers in sub-Saharan Africa during the critical postpartum period (0-6 weeks).
+A culturally respectful WhatsApp postpartum companion designed to support mothers with recovery education, emotional support, breastfeeding, baby-care questions, nourishment, rest and safe discussion of traditional postpartum practices.
+
+## Current WhatsApp architecture
+
+The active test transport is **Evolution API v2 with the Baileys integration**. Evolution receives WhatsApp events and forwards inbound messages to the Care Sister FastAPI webhook; the bot sends replies back through Evolution's `sendText` endpoint.
+
+This is an unofficial WhatsApp Web protocol integration and is not affiliated with or endorsed by Meta. Use it responsibly: prioritize user-initiated/consensual conversations, reasonable messaging frequency, opt-out support and monitoring.
 
 ## Features
-- **Safety-First** regex scanner for emergencies
-- **Empathetic, motherly tone** ("Care Sister")
-- **Regional African traditions** (West, East, South, North)
-- Scheduled check-ins (Day 3, 7, 14)
-- Human nurse escalation with timeout
-- Localized facility directory
 
-## 🛠 Tech Stack
-- FastAPI
+- Safety-first postpartum triage
+- Empathetic Care Sister conversation layer
+- Personalized mother name and conversation topic memory
+- Vaginal/C-section onboarding
+- Main and recovery menus with free-text questions
+- Cultural-care information layer
+- Scheduled postpartum check-in foundation (Day 3, 7 and 14)
+- Human-support escalation foundation
+- SQLite/SQLAlchemy persistence for testing
+
+## Tech stack
+
+- FastAPI + Uvicorn
 - SQLAlchemy + SQLite
-- WhatsApp Cloud API
+- Evolution API v2 / Baileys
+- HTTPX
 - APScheduler
+- Python dotenv
 
-## Quick Start
+## Environment
+
+Copy `.env.example` to `.env` and set:
+
+```text
+EVOLUTION_API_URL=
+EVOLUTION_API_KEY=
+EVOLUTION_INSTANCE=care-sister
+DATABASE_URL=sqlite:///./postpartum.db
+NURSE_NOTIFY_WEBHOOK_URL=
+```
+
+Never commit real API keys or tokens.
+
+## Local development
 
 ```bash
-cp .env.example .env
-# Fill in your Meta WhatsApp credentials
+python -m venv venv
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 10000
+```
+
+Health check: `GET /`
+
+Safe configuration check: `GET /diagnostics`
+
+Evolution webhook: `POST /webhook/evolution`
+
+## Important
+
+Care Sister provides general health information and supportive conversation. It does not diagnose medical conditions or replace a qualified healthcare professional. Safety-sensitive messages should be escalated rather than handled as ordinary conversation.
