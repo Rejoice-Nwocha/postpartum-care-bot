@@ -97,15 +97,13 @@ def parse_delivery_date(text: str):
         except ValueError:
             pass
 
-    match = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", value)
-    if match:
-        for fmt in ("%d %B %Y", "%d %b %Y"):
-            try:
-                parsed = datetime.strptime(value, fmt).date()
-                if parsed <= date.today():
-                    return parsed
-            except ValueError:
-                pass
+    for fmt in ("%d %B %Y", "%d %b %Y"):
+        try:
+            parsed = datetime.strptime(value, fmt).date()
+            if parsed <= date.today():
+                return parsed
+        except ValueError:
+            pass
     return None
 
 
@@ -178,8 +176,23 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
 
     value = clean_text.lower().strip()
 
-    # Onboarding takes priority over generic brain intents. This prevents a first
-    # "Hi" from skipping the delivery setup and prevents repeated greeting replies.
+    # First-time users are guided through the minimum recovery profile before
+    # generic conversation begins. Emergency/safety messages have already been
+    # handled above, so a genuine urgent concern is never blocked by onboarding.
+    if (
+        not mother.delivery_type
+        or mother.delivery_type == DeliveryType.unknown
+    ) and mother.pending_prompt is None:
+        mother.pending_prompt = "awaiting_delivery_type"
+        db.commit()
+        await send_buttons(
+            wa_id,
+            WELCOME_MESSAGE.format(name=mother.first_name),
+            WELCOME_BUTTONS,
+        )
+        return
+
+    # Onboarding takes priority over generic brain intents.
     if mother.pending_prompt == "awaiting_delivery_type":
         if value in {"1", "vaginal", "vaginal delivery", "normal delivery"}:
             mother.delivery_type = DeliveryType.vaginal
@@ -222,7 +235,6 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             mother.delivery_date = parsed
             mother.pending_prompt = "main_menu"
             day = postpartum_day(mother)
-            stage = recovery_stage(mother)
             db.commit()
             await send_text(
                 wa_id,
@@ -243,7 +255,7 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
         )
         return
 
-    # Handle a safety check requested by the emotional-support pathway.
+    # Handle the emotional-support safety check.
     if mother.pending_prompt == "mood_safety_check":
         if value in AFFIRMATIVE:
             mother.pending_prompt = "emotions"
@@ -272,9 +284,8 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             )
             return
 
-    # A follow-up should be interpreted in the context of the current topic before
-    # falling back to a generic intent response. This fixes the old repeated
-    # "I'm listening" loop for messages such as "it smells and it's dark red".
+    # Interpret a follow-up using the existing topic before generic intent
+    # detection. This prevents the old repeated-listening loop.
     if mother.current_topic:
         contextual = contextual_response(
             clean_text,
@@ -294,7 +305,6 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             await send_text(wa_id, reply)
             return
 
-    # Menu commands are checked before greeting/natural-language responses.
     menu = menu_reply(mother, clean_text)
     if menu:
         db.commit()
@@ -304,8 +314,6 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
     brain_response = answer_postpartum_question(clean_text)
     if brain_response:
         remember_topic(mother, clean_text)
-        # A greeting should not wipe out a menu/onboarding state, but it can be
-        # used naturally after setup.
         if detect_intent(clean_text) == "greeting":
             mother.pending_prompt = "main_menu"
         elif brain_response.follow_up:
@@ -317,14 +325,6 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
         await send_text(wa_id, reply)
         return
 
-    if not mother.delivery_type or mother.delivery_type == DeliveryType.unknown:
-        await send_buttons(wa_id, WELCOME_MESSAGE.format(name=mother.first_name), WELCOME_BUTTONS)
-        mother.pending_prompt = "awaiting_delivery_type"
-        db.commit()
-        return
-
-    # Free-text is always welcome. If we don't recognise the message, keep the
-    # conversation anchored to the current topic instead of repeating a greeting.
     if mother.current_topic:
         prompt = (
             f"I'm with you, {mother.first_name}. We're talking about your {mother.current_topic.replace('_', ' ')}.\n\n"
