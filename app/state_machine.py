@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
+import re
 from sqlalchemy.orm import Session
 from app.db import Mother, DeliveryType
-from app.safety_scanner import scan_message
+from app.safety_scanner import scan_message, TriageLevel
 from app.whatsapp_client import send_text, send_buttons
 from app.content import WELCOME_MESSAGE, WELCOME_BUTTONS
-from app.postpartum_brain import answer_postpartum_question, detect_intent
+from app.postpartum_brain import answer_postpartum_question, contextual_response, detect_intent
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ RECOVERY_MENU = (
 
 MENU_COMMANDS = {"menu", "main menu", "home", "start", "0"}
 TALK_COMMANDS = {"9", "talk", "i just want to talk", "just want to talk"}
+AFFIRMATIVE = {"yes", "yeah", "yep", "i am", "i do", "safe", "i feel safe", "1"}
+NEGATIVE = {"no", "nope", "not really", "unsafe", "i don't", "i am not", "2"}
 
 
 def get_or_create_mother(db: Session, wa_id: str, first_name: str = "Mama"):
@@ -62,7 +65,7 @@ def personalize(text: str, first_name: str) -> str:
 
 def remember_topic(mother: Mother, text: str):
     intent = detect_intent(text)
-    if intent:
+    if intent and intent != "greeting":
         mother.current_topic = intent
 
 
@@ -70,6 +73,40 @@ def postpartum_day(mother: Mother):
     if not mother.delivery_date:
         return None
     return max(0, (date.today() - mother.delivery_date).days)
+
+
+def recovery_stage(mother: Mother) -> str:
+    day = postpartum_day(mother)
+    if day is None:
+        return "unknown"
+    if day <= 14:
+        return "early_recovery"
+    if day <= 42:
+        return "healing_recovery"
+    return "ongoing_recovery"
+
+
+def parse_delivery_date(text: str):
+    value = (text or "").strip()
+    formats = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y")
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(value, fmt).date()
+            if parsed <= date.today():
+                return parsed
+        except ValueError:
+            pass
+
+    match = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", value)
+    if match:
+        for fmt in ("%d %B %Y", "%d %b %Y"):
+            try:
+                parsed = datetime.strptime(value, fmt).date()
+                if parsed <= date.today():
+                    return parsed
+            except ValueError:
+                pass
+    return None
 
 
 def menu_reply(mother: Mother, text: str):
@@ -133,17 +170,146 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
         return
 
     scan_result = scan_message(clean_text)
-    if scan_result.triage_level != 'GREEN':
+    if scan_result.triage_level != TriageLevel.GREEN:
         mother.triage_level = scan_result.triage_level
         db.commit()
         await send_text(wa_id, personalize(scan_result.response_template, mother.first_name))
         return
 
-    # Natural-language questions always remain available, even inside menus.
+    value = clean_text.lower().strip()
+
+    # Onboarding takes priority over generic brain intents. This prevents a first
+    # "Hi" from skipping the delivery setup and prevents repeated greeting replies.
+    if mother.pending_prompt == "awaiting_delivery_type":
+        if value in {"1", "vaginal", "vaginal delivery", "normal delivery"}:
+            mother.delivery_type = DeliveryType.vaginal
+            mother.pending_prompt = "awaiting_delivery_date"
+            db.commit()
+            await send_text(
+                wa_id,
+                personalize(
+                    "Thank you, Mama. I've noted that you had a vaginal delivery.\n\n"
+                    "What date did you give birth? You can reply like **7/09/2026** or **2026-09-07**.",
+                    mother.first_name,
+                ),
+            )
+            return
+        if value in {"2", "c-section", "c section", "csection", "c-section delivery", "cesarean", "caesarean"}:
+            mother.delivery_type = DeliveryType.c_section
+            mother.pending_prompt = "awaiting_delivery_date"
+            db.commit()
+            await send_text(
+                wa_id,
+                personalize(
+                    "Thank you, Mama. I've noted that you had a C-section.\n\n"
+                    "What date did you give birth? You can reply like **7/09/2026** or **2026-09-07**.",
+                    mother.first_name,
+                ),
+            )
+            return
+        await send_text(
+            wa_id,
+            personalize(
+                "I'm here with you, Mama. Reply **1** for Vaginal Delivery or **2** for C-Section. You can also tell me the delivery type in your own words.",
+                mother.first_name,
+            ),
+        )
+        return
+
+    if mother.pending_prompt == "awaiting_delivery_date":
+        parsed = parse_delivery_date(clean_text)
+        if parsed:
+            mother.delivery_date = parsed
+            mother.pending_prompt = "main_menu"
+            day = postpartum_day(mother)
+            stage = recovery_stage(mother)
+            db.commit()
+            await send_text(
+                wa_id,
+                personalize(
+                    f"Got it, Mama. I've saved your delivery date as {parsed.strftime('%d %B %Y')}.\n\n"
+                    f"You're about **day {day} postpartum**, so I'll use that context when we talk about your recovery.\n\n"
+                    + MAIN_MENU,
+                    mother.first_name,
+                ),
+            )
+            return
+        await send_text(
+            wa_id,
+            personalize(
+                "I couldn't recognise that date. Please send your delivery date as **DD/MM/YYYY** or **YYYY-MM-DD** (for example, 07/09/2026).",
+                mother.first_name,
+            ),
+        )
+        return
+
+    # Handle a safety check requested by the emotional-support pathway.
+    if mother.pending_prompt == "mood_safety_check":
+        if value in AFFIRMATIVE:
+            mother.pending_prompt = "emotions"
+            db.commit()
+            await send_text(
+                wa_id,
+                personalize(
+                    "Thank you for telling me. I'm glad you're safe right now. You don't have to carry everything at once.\n\n"
+                    "What has been weighing on you most today?",
+                    mother.first_name,
+                ),
+            )
+            return
+        if value in NEGATIVE:
+            mother.pending_prompt = "human_support"
+            mother.bot_status = "human_review"
+            mother.human_review_since = datetime.utcnow()
+            db.commit()
+            await send_text(
+                wa_id,
+                personalize(
+                    "Thank you for telling me. Please don't stay alone with this. Tell a trusted person who can be with you right now and seek urgent help from a qualified healthcare professional or emergency service. If you are in immediate danger, contact your local emergency service now.\n\n"
+                    "You deserve immediate, human support.",
+                    mother.first_name,
+                ),
+            )
+            return
+
+    # A follow-up should be interpreted in the context of the current topic before
+    # falling back to a generic intent response. This fixes the old repeated
+    # "I'm listening" loop for messages such as "it smells and it's dark red".
+    if mother.current_topic:
+        contextual = contextual_response(
+            clean_text,
+            current_topic=mother.current_topic,
+            postpartum_days=postpartum_day(mother),
+        )
+        if contextual:
+            remember_topic(mother, clean_text)
+            if mother.current_topic == "mood" and "safe right now" in contextual.text.lower():
+                mother.pending_prompt = "mood_safety_check"
+            else:
+                mother.pending_prompt = mother.current_topic
+            reply = personalize(contextual.text, mother.first_name)
+            if contextual.follow_up:
+                reply += "\n\n" + personalize(contextual.follow_up, mother.first_name)
+            db.commit()
+            await send_text(wa_id, reply)
+            return
+
+    # Menu commands are checked before greeting/natural-language responses.
+    menu = menu_reply(mother, clean_text)
+    if menu:
+        db.commit()
+        await send_text(wa_id, personalize(menu, mother.first_name))
+        return
+
     brain_response = answer_postpartum_question(clean_text)
-    if brain_response and clean_text.lower() not in MENU_COMMANDS:
+    if brain_response:
         remember_topic(mother, clean_text)
-        mother.pending_prompt = mother.pending_prompt if mother.pending_prompt not in {"awaiting_delivery_type", "main_menu"} else None
+        # A greeting should not wipe out a menu/onboarding state, but it can be
+        # used naturally after setup.
+        if detect_intent(clean_text) == "greeting":
+            mother.pending_prompt = "main_menu"
+        elif brain_response.follow_up:
+            mother.pending_prompt = mother.current_topic or mother.pending_prompt
         reply = personalize(brain_response.text, mother.first_name)
         if brain_response.follow_up:
             reply += "\n\n" + personalize(brain_response.follow_up, mother.first_name)
@@ -151,40 +317,17 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
         await send_text(wa_id, reply)
         return
 
-    if mother.pending_prompt == 'awaiting_delivery_type':
-        choice = clean_text.lower()
-        if choice in {'1', 'vaginal', 'vaginal delivery'}:
-            mother.delivery_type = DeliveryType.vaginal
-            mother.pending_prompt = 'main_menu'
-            db.commit()
-            await send_text(wa_id, personalize("Thank you, Mama. I've noted that you had a vaginal delivery.\n\n" + MAIN_MENU, mother.first_name))
-            return
-        if choice in {'2', 'c-section', 'c section', 'csection', 'c-section delivery', 'cesarean', 'caesarean'}:
-            mother.delivery_type = DeliveryType.c_section
-            mother.pending_prompt = 'main_menu'
-            db.commit()
-            await send_text(wa_id, personalize("Thank you, Mama. I've noted that you had a C-section.\n\n" + MAIN_MENU, mother.first_name))
-            return
-
-        await send_text(wa_id, personalize("I'm here with you, Mama. Reply 1 for Vaginal Delivery or 2 for C-Section, or ask your postpartum question in your own words.", mother.first_name))
-        return
-
-    menu = menu_reply(mother, clean_text)
-    if menu:
-        db.commit()
-        await send_text(wa_id, personalize(menu, mother.first_name))
-        return
-
     if not mother.delivery_type or mother.delivery_type == DeliveryType.unknown:
         await send_buttons(wa_id, WELCOME_MESSAGE.format(name=mother.first_name), WELCOME_BUTTONS)
-        mother.pending_prompt = 'awaiting_delivery_type'
+        mother.pending_prompt = "awaiting_delivery_type"
         db.commit()
         return
 
-    # Continue the last topic naturally when the message is conversational.
+    # Free-text is always welcome. If we don't recognise the message, keep the
+    # conversation anchored to the current topic instead of repeating a greeting.
     if mother.current_topic:
         prompt = (
-            f"I'm listening, {mother.first_name}. We're talking about your {mother.current_topic.replace('_', ' ')}. "
+            f"I'm with you, {mother.first_name}. We're talking about your {mother.current_topic.replace('_', ' ')}.\n\n"
             "Tell me a little more about what you're experiencing, and we'll take it one step at a time."
         )
     else:
