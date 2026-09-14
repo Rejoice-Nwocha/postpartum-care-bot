@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum
+from sqlalchemy import create_engine, Column, String, Integer, Date, DateTime, Text, Enum as SQLEnum, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
 
@@ -57,7 +57,17 @@ class MessageLog(Base):
 
 
 def init_db():
+    """Create tables and apply lightweight migrations for existing SQLite DBs."""
     Base.metadata.create_all(bind=engine)
+
+    if "sqlite" not in settings.DATABASE_URL:
+        return
+
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("mothers")}
+    if "current_topic" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE mothers ADD COLUMN current_topic VARCHAR"))
 
 
 def get_db():
