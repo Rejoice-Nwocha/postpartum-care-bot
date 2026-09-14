@@ -64,40 +64,41 @@ async def verify_webhook(request: Request):
     challenge = request.query_params.get("hub.challenge")
     if mode == "subscribe" and token and token == settings.VERIFY_TOKEN:
         return PlainTextResponse(content=challenge, status_code=200)
-    raise HTTPException(status_code=403, detail="Verification failed")
+    return {"status": "ok", "message": "Care Sister webhook endpoint is reachable"}
 
 
 @app.post("/webhook")
 async def receive_webhook(request: Request):
-    try:
-        await request.json()
-        logger.info("Received legacy webhook payload")
-        return {"status": "ok"}
-    except Exception:
-        logger.exception("Error processing legacy webhook")
-        return {"status": "error"}
+    # Keep the legacy path compatible with Evolution configurations that point
+    # at /webhook instead of /webhook/evolution.
+    logger.info("POST /webhook received; forwarding to Evolution handler")
+    return await evolution_webhook(request)
 
 
 def extract_evolution_message(payload: dict):
     data = payload.get("data") or {}
     key = data.get("key") or {}
     message = data.get("message") or {}
-    remote_jid = key.get("remoteJid") or ""
+
+    remote_jid = key.get("remoteJid") or key.get("remoteJidAlt") or ""
     if not remote_jid or remote_jid.endswith("@g.us") or key.get("fromMe"):
         return None
 
+    extended = message.get("extendedTextMessage") or {}
+    image = message.get("imageMessage") or {}
+    video = message.get("videoMessage") or {}
     text = (
         message.get("conversation")
-        or (message.get("extendedTextMessage") or {}).get("text")
-        or (message.get("imageMessage") or {}).get("caption")
-        or (message.get("videoMessage") or {}).get("caption")
+        or extended.get("text")
+        or image.get("caption")
+        or video.get("caption")
         or ""
     ).strip()
     if not text:
         return None
 
     wa_id = remote_jid.split("@", 1)[0]
-    first_name = (data.get("pushName") or "Mama").strip() or "Mama"
+    first_name = (data.get("pushName") or key.get("pushName") or "Mama").strip() or "Mama"
     message_id = key.get("id") or ""
     return wa_id, text, first_name, message_id
 
@@ -107,14 +108,20 @@ async def evolution_webhook(request: Request):
     try:
         payload = await request.json()
         event = str(payload.get("event") or "").strip().upper().replace(".", "_")
+        logger.info("Evolution webhook received: event=%s", event or "unknown")
+
         if event and event not in {"MESSAGES_UPSERT", "MESSAGES_UPSERTED"}:
+            logger.info("Ignoring Evolution event: %s", event)
             return {"status": "ignored", "event": event}
 
         extracted = extract_evolution_message(payload)
         if not extracted:
+            logger.info("Evolution payload contained no user text message")
             return {"status": "ignored"}
 
         wa_id, text, first_name, message_id = extracted
+        logger.info("Processing inbound WhatsApp message: wa_id=%s message_id=%s", wa_id, message_id or "none")
+
         db = SessionLocal()
         try:
             if message_id:
@@ -134,6 +141,7 @@ async def evolution_webhook(request: Request):
         finally:
             db.close()
 
+        logger.info("Inbound message handled successfully: wa_id=%s", wa_id)
         return {"status": "ok"}
     except Exception:
         logger.exception("Error processing Evolution webhook")
