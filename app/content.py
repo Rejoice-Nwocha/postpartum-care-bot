@@ -1,28 +1,44 @@
-﻿WELCOME_MESSAGE = "Hello Mama {name}! Congratulations on the safe arrival of your bundle of joy! 👶🎉 We are so grateful to God for your safe delivery. The first 24 hours can feel completely overwhelming. Please remember to rest as much as you can while your baby sleeps. To help us send you the exact recovery tips you need for your body, please tell us how you delivered your baby:"
+WELCOME_MESSAGE = (
+    "Hello Mama {name}.\n\n"
+    "I'm Care Sister by ACHOT — a compassionate postpartum companion here to help you understand your recovery, "
+    "your emotions, your body, breastfeeding, your baby, rest, nourishment and culturally rooted care.\n\n"
+    "I can give general health information and help you notice when something needs professional attention. "
+    "I cannot diagnose a medical condition.\n\n"
+    "To personalize your recovery guidance, how did you give birth?"
+)
 
 WELCOME_BUTTONS = ["Vaginal Delivery", "C-Section Delivery"]
-# Cultural Validation Module - Respectful blending of tradition and modern care
 
+
+# Cultural content is intentionally framed as information, not endorsement.
+# Practices should be evaluated for hygiene, heat/burn risk, ingestion risk,
+# interactions with medicines, wound healing and other postpartum concerns.
 CULTURAL_NOTES = {
-    "west_africa": "In many West African traditions, the postpartum period is a time of rest and community support. Foods like pepper soup, yam, and leafy greens are often used to help with healing and milk production. Rest is highly valued.",
-    "east_africa": "In East Africa, practices like drinking warm herbal teas and gentle massage are common. The support of family (Omugwo in some communities) is important. Focus on hydration and nutrient-rich foods.",
-    "southern_africa": "Southern African traditions often emphasize rest, warmth, and traditional herbs. Belly binding is practiced in some communities for support — done gently.",
-    "north_africa": "In North African traditions, the 40-day rest period is common. Nourishing foods, hydration, and family support play a big role in recovery.",
+    "west": (
+        "In many West African communities, postpartum care may include a period of rest, "
+        "family support and culturally familiar foods. Practices vary widely between families and countries."
+    ),
+    "east": (
+        "Across East Africa, postpartum support may involve extended family care, warm foods or drinks, "
+        "massage and community support. Practices differ between communities."
+    ),
+    "south": (
+        "Across Southern Africa, postpartum traditions may emphasize rest, warmth, family support and, "
+        "in some communities, forms of gentle body support. Practices differ between communities."
+    ),
+    "north": (
+        "In parts of North Africa, postpartum traditions may include a period of rest, family care, "
+        "nourishing foods and culturally meaningful routines. Practices differ between communities."
+    ),
 }
 
-def get_cultural_advice(region: str = "general"):
-    if region.lower() in CULTURAL_NOTES:
-        return CULTURAL_NOTES[region.lower()]
-    return "Across African traditions, rest, family support, and nourishing foods are highly valued during the postpartum period. Combine this with modern medical advice for best results."
-CULTURAL_NOTES = {
-    "west": "In West Africa, postpartum care often includes special soups (like pepper soup), rest, and support from family. Many mothers are encouraged to eat nutrient-rich foods like yam, plantain, and leafy greens to aid healing and milk supply.",
-    "east": "In East Africa, the 'Omugwo' tradition (grandmother support) is common. Warm herbal teas, gentle massage, and community help are valued. Rest and hydration are emphasized.",
-    "south": "In Southern Africa, traditions often include belly binding (done gently), warm foods, and rest. Family and community play a big role in supporting the new mother.",
-    "north": "In North Africa, the 40-day rest period is important. Nourishing foods, hydration, and family care are central to recovery.",
-}
 
 def get_cultural_advice(region: str = "general"):
-    key = region.lower()[:4]  # west, east, south, north
+    key = (region or "").lower().strip()[:4]
     if key in CULTURAL_NOTES:
         return CULTURAL_NOTES[key]
-    return "Across many African cultures, the postpartum period is honored with rest, family support, and nourishing foods. Listen to your body and combine tradition with medical advice."
+    return (
+        "Postpartum traditions can provide comfort, identity and community support. "
+        "Tell me the specific practice you are considering and I can help you think through its cultural meaning "
+        "and safety considerations without judging your tradition."
+    )
