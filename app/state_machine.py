@@ -6,6 +6,7 @@ from app.whatsapp_client import send_text, send_buttons
 from app.content import WELCOME_MESSAGE, WELCOME_BUTTONS
 from app.postpartum_brain import answer_postpartum_question, detect_intent
 from app.contextual_response import contextual_response
+from app.topic_router import match_topic_route
 import logging
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,10 @@ def personalize(text: str, first_name: str) -> str:
 
 
 def remember_topic(mother: Mother, text: str):
+    route = match_topic_route(text)
+    if route:
+        mother.current_topic = route.topic
+        return route.topic
     intent = detect_intent(text)
     if intent and intent != "greeting":
         mother.current_topic = intent
@@ -56,18 +61,18 @@ def remember_response_context(mother: Mother, follow_up: str = ""):
     mother.expected_answer_type = "free_text" if follow_up else None
 
 
+def set_topic_prompt(mother: Mother, topic: str, prompt: str):
+    mother.current_topic = topic
+    mother.pending_prompt = topic
+    mother.pending_question = prompt
+    mother.expected_answer_type = "free_text"
+    return prompt
+
+
 def postpartum_day(mother: Mother):
     if not mother.delivery_date:
         return None
     return max(0, (date.today() - mother.delivery_date).days)
-
-
-def recovery_stage(mother: Mother) -> str:
-    day = postpartum_day(mother)
-    if day is None: return "unknown"
-    if day <= 14: return "early_recovery"
-    if day <= 42: return "healing_recovery"
-    return "ongoing_recovery"
 
 
 def parse_delivery_date(text: str):
@@ -89,33 +94,50 @@ def parse_delivery_date(text: str):
 def menu_reply(mother: Mother, text: str):
     value = text.lower().strip(); state = mother.pending_prompt or ""
     if value in MENU_COMMANDS:
-        mother.pending_prompt = "main_menu"; return MAIN_MENU
+        mother.pending_prompt = "main_menu"
+        mother.pending_question = None
+        mother.expected_answer_type = None
+        return MAIN_MENU
     if value in TALK_COMMANDS:
+        mother.current_topic = "talking"
         mother.pending_prompt = "talking"
-        return "I'm here, and you don't need to turn this into a medical question.\n\nTell me what's on your mind, exactly as it comes. I'm listening."
+        return set_topic_prompt(mother, "talking", "What's on your mind right now?")
     if state == "main_menu":
         choices = {
-            "1": ("recovery_menu", RECOVERY_MENU), "2": ("emotions", "Tell me what has been going on emotionally."),
-            "3": ("body", "Tell me what has changed in your body or what you're noticing."),
-            "4": ("breastfeeding", "Tell me what is happening with breastfeeding, latch, milk supply or breast comfort."),
-            "5": ("baby", "Tell me what is worrying you about your baby."), "6": ("nutrition", "Tell me what you need help with around food, appetite or hydration."),
-            "7": ("sleep", "Let's talk about your rest. What's making sleep difficult right now?"),
-            "8": ("cultural", "Tell me the cultural or traditional postpartum practice you'd like to understand."),
-            "9": ("talking", "I'm here. Tell me what's on your mind, exactly as it comes."),
+            "1": ("recovery", "What part of your recovery would you like help with right now?"),
+            "2": ("emotions", "What's been weighing on you most right now?"),
+            "3": ("body", "Which change in your body would you like to talk about first?"),
+            "4": ("breastfeeding", "Is your main concern latch, pain, milk supply, or your baby's feeding pattern?"),
+            "5": ("baby", "What is worrying you about your baby right now?"),
+            "6": ("nutrition", "Are you struggling more with appetite, getting enough fluids, or knowing what foods support recovery?"),
+            "7": ("sleep", "Are you getting any opportunity to rest, and what is making sleep or rest difficult?"),
+            "8": ("cultural", "Which cultural or traditional practice would you like to talk about?"),
+            "9": ("talking", "What's on your mind right now?"),
         }
         if value in choices:
-            mother.pending_prompt, reply = choices[value]; return reply
+            topic, prompt = choices[value]
+            return set_topic_prompt(mother, topic, prompt)
     if state == "recovery_menu":
         choices = {
-            "0": ("main_menu", MAIN_MENU), "1": ("physical_recovery", "Let's talk about your physical recovery. Tell me what you're noticing."),
-            "2": ("nutrition", "Tell me what you need help with around food, appetite or hydration."), "3": ("sleep", "Tell me about your rest and sleep."),
-            "4": ("breastfeeding", "Tell me what is happening with breastfeeding or your breasts."), "5": ("emotions", "Tell me how you've been feeling emotionally."),
-            "6": ("baby", "Tell me what you'd like help with about your baby."), "7": ("csection", "Tell me how your C-section recovery is going."),
-            "8": ("perineum", "Tell me how your vaginal-birth recovery is feeling, including any soreness, tear or stitches."),
-            "9": ("cultural", "Tell me the cultural or traditional postpartum practice you'd like to understand."),
+            "0": ("main_menu", None),
+            "1": ("physical_recovery", "What physical change or symptom are you noticing right now?"),
+            "2": ("nutrition", "Are you struggling more with appetite, getting enough fluids, or knowing what foods support recovery?"),
+            "3": ("sleep", "Are you getting any opportunity to rest, and what is making sleep or rest difficult?"),
+            "4": ("breastfeeding", "Is your main concern latch, pain, milk supply, or your baby's feeding pattern?"),
+            "5": ("emotions", "What's been weighing on you most right now?"),
+            "6": ("baby", "What is worrying you about your baby right now?"),
+            "7": ("csection", "What are you noticing around your C-section recovery right now?"),
+            "8": ("perineum", "What are you noticing in your recovery after the vaginal birth?"),
+            "9": ("cultural", "Which cultural or traditional practice would you like to talk about?"),
         }
         if value in choices:
-            mother.pending_prompt, reply = choices[value]; return reply
+            topic, prompt = choices[value]
+            if topic == "main_menu":
+                mother.pending_prompt = "main_menu"
+                mother.pending_question = None
+                mother.expected_answer_type = None
+                return MAIN_MENU
+            return set_topic_prompt(mother, topic, prompt)
     return None
 
 
@@ -164,6 +186,31 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             mother.pending_prompt = "human_support"; mother.bot_status = "human_review"; mother.human_review_since = datetime.utcnow(); db.commit()
             await send_text(wa_id, personalize("Thank you for telling me. Please don't stay alone with this. Tell a trusted person who can be with you and seek urgent help from a qualified healthcare professional or emergency service now. You deserve immediate support.", mother.first_name)); return
 
+    # Explicit menu commands and broad topic labels must be processed before
+    # stale conversational context. A mother's new topic should never inherit
+    # the previous topic merely because the new message is short.
+    menu = menu_reply(mother, clean_text)
+    if menu:
+        db.commit()
+        route = match_topic_route(clean_text)
+        if route:
+            reply = route.response + "\n\n" + route.follow_up
+        elif mother.current_topic == "main_menu":
+            reply = menu
+        else:
+            reply = menu
+        await send_text(wa_id, personalize(reply, mother.first_name)); return
+
+    route = match_topic_route(clean_text)
+    if route:
+        mother.current_topic = route.topic
+        mother.pending_prompt = route.topic
+        mother.pending_question = route.follow_up
+        mother.expected_answer_type = "free_text"
+        db.commit()
+        reply = route.response + "\n\n" + route.follow_up
+        await send_text(wa_id, personalize(reply, mother.first_name)); return
+
     contextual = contextual_response(
         clean_text,
         current_topic=mother.current_topic,
@@ -197,10 +244,6 @@ async def handle_message(db: Session, wa_id: str, text: str, first_name: str):
             reply += "\n\n" + personalize(contextual.follow_up, mother.first_name)
         remember_response_context(mother, contextual.follow_up)
         db.commit(); await send_text(wa_id, reply); return
-
-    menu = menu_reply(mother, clean_text)
-    if menu:
-        db.commit(); await send_text(wa_id, personalize(menu, mother.first_name)); return
 
     brain_response = answer_postpartum_question(clean_text)
     if brain_response:
